@@ -1,0 +1,22 @@
+{
+  "name": "maushold-mafia-bot",
+  "version": "1.0.0",
+  "description": "Discord bot for Maushold Mafia (Pokemon-themed werewolf)",
+  "main": "dist/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "startPrd": "npm run register-commands && npm run build && npm start",
+    "register-commands": "tsx src/registerCommands.ts"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
