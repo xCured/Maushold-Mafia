@@ -42,6 +42,7 @@ export interface GameSettings {
   revealRoles: boolean;
   allowSelfTarget: boolean;
   noRepeatProtect: boolean;
+  hideVotes: boolean;
 }
 
 export interface PlayerState {
@@ -53,6 +54,7 @@ export interface PlayerState {
   lastProtectedTargetId?: string;
   copiedRole?: Role;
   dmOk?: boolean;
+  lastInvestigationNote?: string;
 }
 
 export interface NightActions {
@@ -84,6 +86,10 @@ export interface GameState {
     nightTimer?: NodeJS.Timeout;
     dayTimer?: NodeJS.Timeout;
     voteTimer?: NodeJS.Timeout;
+    nightReminder20?: NodeJS.Timeout;
+    dayReminder60?: NodeJS.Timeout;
+    dayReminder20?: NodeJS.Timeout;
+    voteReminder20?: NodeJS.Timeout;
   };
   settings: GameSettings;
   channel?: TextChannel;
@@ -97,6 +103,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   revealRoles: true,
   allowSelfTarget: false,
   noRepeatProtect: true,
+  hideVotes: false,
 };
 
 export const ROLE_CONFIGS: Record<Role, RoleConfig> = {
