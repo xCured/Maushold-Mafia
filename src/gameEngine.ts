@@ -1,12 +1,12 @@
 //TODO Convert to ternary where possible to reduce line count and improve readability
 
+
 import {
   EmbedBuilder,
   type ChatInputCommandInteraction,
   type Client,
   type GuildMember,
   type TextChannel,
-  type User,
 } from "discord.js";
 import {
   DEFAULT_SETTINGS,
@@ -43,6 +43,10 @@ function clearTimers(game: GameState): void {
   if (game.timers.nightTimer) clearTimeout(game.timers.nightTimer);
   if (game.timers.dayTimer) clearTimeout(game.timers.dayTimer);
   if (game.timers.voteTimer) clearTimeout(game.timers.voteTimer);
+  if (game.timers.nightReminder20) clearTimeout(game.timers.nightReminder20);
+  if (game.timers.dayReminder60) clearTimeout(game.timers.dayReminder60);
+  if (game.timers.dayReminder20) clearTimeout(game.timers.dayReminder20);
+  if (game.timers.voteReminder20) clearTimeout(game.timers.voteReminder20);
   game.timers = {};
 }
 
@@ -66,18 +70,6 @@ export function getGame(channelId: string): GameState | undefined {
 
 export function formatRole(role: Role): string {
   return role.toLowerCase().replace("_", " ");
-}
-
-async function safeRoleMessage(user: User, interaction: ChatInputCommandInteraction, content: string): Promise<void> {
-  try {
-    await user.send(content);
-  } catch {
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp({ content: `⚠️ I couldn't DM you. ${content}`, ephemeral: true });
-    } else {
-      await interaction.reply({ content: `⚠️ I couldn't DM you. ${content}`, ephemeral: true });
-    }
-  }
 }
 
 function aliveMentions(game: GameState): string {
@@ -107,15 +99,15 @@ async function endGame(game: GameState, reason: string): Promise<void> {
 
   if (game.channel) {
     const reveal = [...game.players.values()]
-      .map((p) => `• **${p.displayName}** — ${formatRole(p.role)} (${p.faction})`)
-      .join("\n");
+        .map((p) => `• **${p.displayName}** — ${formatRole(p.role)} (${p.faction})`)
+        .join("\n");
 
     await game.channel.send({
       embeds: [
         new EmbedBuilder()
-          .setTitle("🎉 Game Over")
-          .setDescription(`${reason}\n\n**Role Reveal**\n${reveal}`)
-          .setColor(0xffc0cb),
+            .setTitle("🎉 Game Over")
+            .setDescription(`${reason}\n\n**Role Reveal**\n${reveal}`)
+            .setColor(0xffc0cb),
       ],
     });
   }
@@ -131,11 +123,17 @@ async function beginVoting(client: Client, game: GameState): Promise<void> {
   await game.channel?.send({
     embeds: [
       new EmbedBuilder()
-        .setTitle("🗳️ Voting Time")
-        .setDescription("Use `/mafia vote @user` to vote. Ties result in no elimination.")
-        .setColor(0xf4d03f),
+          .setTitle("🔄 New Phase: 🗳️ Voting")
+          .setDescription("Voting has started. Use `/mafia vote @user` or the Vote button. Ties result in no elimination.")
+          .setColor(0xf4d03f),
     ],
   });
+
+  if (game.settings.voteDurationSec > 20) {
+    game.timers.voteReminder20 = setTimeout(async () => {
+      await game.channel?.send("⏳ Voting reminder: 20 seconds remaining!");
+    }, (game.settings.voteDurationSec - 20) * 1000);
+  }
 
   game.timers.voteTimer = setTimeout(async () => {
     await endVotingAndResolve(client, game);
@@ -148,11 +146,23 @@ async function beginDay(client: Client, game: GameState): Promise<void> {
   await game.channel?.send({
     embeds: [
       new EmbedBuilder()
-        .setTitle(`🧀 Discussion — Day ${game.dayNumber}`)
-        .setDescription(`Alive: ${aliveMentions(game)}\nDiscuss! Voting will open soon.`)
-        .setColor(0x58d68d),
+          .setTitle(`🔄 New Phase: 🧀 Day ${game.dayNumber} Discussion`)
+          .setDescription(`Alive: ${aliveMentions(game)}\nDiscuss now — voting opens after this phase.`)
+          .setColor(0x58d68d),
     ],
   });
+
+  if (game.settings.dayDurationSec > 60) {
+    game.timers.dayReminder60 = setTimeout(async () => {
+      await game.channel?.send("⏳ Day discussion reminder: 60 seconds remaining!");
+    }, (game.settings.dayDurationSec - 60) * 1000);
+  }
+
+  if (game.settings.dayDurationSec > 20) {
+    game.timers.dayReminder20 = setTimeout(async () => {
+      await game.channel?.send("⏳ Day discussion reminder: 20 seconds remaining!");
+    }, (game.settings.dayDurationSec - 20) * 1000);
+  }
 
   game.timers.dayTimer = setTimeout(async () => {
     await beginVoting(client, game);
@@ -166,11 +176,17 @@ async function beginNight(client: Client, game: GameState): Promise<void> {
   await game.channel?.send({
     embeds: [
       new EmbedBuilder()
-        .setTitle(`🌙 Night ${game.dayNumber}`)
-        .setDescription(`Alive: ${aliveMentions(game)}\nPower roles, check your DMs and submit actions.`)
-        .setColor(0x5dade2),
+          .setTitle(`🔄 New Phase: 🌙 Night ${game.dayNumber}`)
+          .setDescription(`Alive: ${aliveMentions(game)}\nPower roles, use your role action now. (Use /mafia actions or the My Role button.)`)
+          .setColor(0x5dade2),
     ],
   });
+
+  if (game.settings.nightDurationSec > 20) {
+    game.timers.nightReminder20 = setTimeout(async () => {
+      await game.channel?.send("⏳ Night reminder: 20 seconds remaining!");
+    }, (game.settings.nightDurationSec - 20) * 1000);
+  }
 
   game.timers.nightTimer = setTimeout(async () => {
     await endNightAndResolve(client, game);
@@ -204,8 +220,8 @@ async function endNightAndResolve(client: Client, game: GameState): Promise<void
     const inspected = game.players.get(inspectTarget);
     if (investigator && inspected) {
       const apparentFaction = inspected.role === Role.DITTO ? Faction.TOWN : inspected.faction;
-      const user = await client.users.fetch(investigator.userId);
-      await user.send(`🔮 Your vision reveals that **${inspected.displayName}** appears as **${apparentFaction}**.`);
+      investigator.lastInvestigationNote = `🔮 Your vision reveals that **${inspected.displayName}** appears as **${apparentFaction}**.`;
+      await game.channel?.send(`🔮 <@${investigator.userId}>, your vision is ready. Use **/mafia actions** (or **My Role** button) to view it privately.`);
     }
   }
 
@@ -213,8 +229,8 @@ async function endNightAndResolve(client: Client, game: GameState): Promise<void
   if (killedId) {
     const dead = game.players.get(killedId);
     dawnText = dead
-      ? `💀 <@${dead.userId}> was found among crumbs.${game.settings.revealRoles ? ` Role: **${formatRole(dead.role)}**.` : ""}`
-      : dawnText;
+        ? `💀 <@${dead.userId}> was found among crumbs.${game.settings.revealRoles ? ` Role: **${formatRole(dead.role)}**.` : ""}`
+        : dawnText;
   } else if (attackedButSaved) {
     dawnText = "⚔️ Someone was attacked, but they survived.";
   }
@@ -272,7 +288,7 @@ async function endVotingAndResolve(client: Client, game: GameState): Promise<voi
   game.deadIds.add(topTarget);
 
   await game.channel?.send(
-    `🔨 <@${topTarget}> was banished by vote.${game.settings.revealRoles ? ` Role: **${formatRole(eliminated.role)}**.` : ""}`,
+      `🔨 <@${topTarget}> was banished by vote.${game.settings.revealRoles ? ` Role: **${formatRole(eliminated.role)}**.` : ""}`,
   );
 
   if (eliminated.role === Role.MIMIKYU) {
@@ -405,21 +421,11 @@ export async function startGame(interaction: ChatInputCommandInteraction, client
     player.alive = true;
   });
 
-  for (const player of game.players.values()) {
-    const user = await client.users.fetch(player.userId);
-    const roleCfg = ROLE_CONFIGS[player.role];
-    await safeRoleMessage(
-      user,
-      interaction,
-      `🎭 Your role is **${formatRole(player.role)}** (${player.faction}).\n${roleCfg.description}\n${roleCfg.commandHint}`,
-    );
-  }
-
   game.status = GameStatus.RUNNING;
   game.phase = GamePhase.NIGHT;
   game.dayNumber = 1;
 
-  await game.channel?.send("🎮 Game started! Night 1 begins.");
+  await game.channel?.send("🎮 Game started! Night 1 begins.\nEveryone: use **/mafia actions** (or the **My Role** button) to see your private role popup in this channel.");
   await beginNight(client, game);
   return "Game started successfully.";
 }
@@ -458,14 +464,15 @@ export function actionReminder(interaction: ChatInputCommandInteraction): string
   const player = game.players.get(interaction.user.id);
   if (!player) return "You're not in this game.";
   const roleCfg = ROLE_CONFIGS[player.role];
-  return `Role: **${formatRole(player.role)}** (${player.faction})\n${roleCfg.description}\n${roleCfg.commandHint}`;
+  const investigationNote = player.lastInvestigationNote ? `\n\n${player.lastInvestigationNote}` : "";
+  return `Role: **${formatRole(player.role)}** (${player.faction})\n${roleCfg.description}\n${roleCfg.commandHint}${investigationNote}`;
 }
 
 function validateNightAction(
-  game: GameState,
-  actor: PlayerState,
-  targetId: string,
-  requiredRole: Role,
+    game: GameState,
+    actor: PlayerState,
+    targetId: string,
+    requiredRole: Role,
 ): string | undefined {
   if (game.status !== GameStatus.RUNNING) return "Game is not running.";
   if (game.phase !== GamePhase.NIGHT) return "Night actions can only be used during NIGHT.";
@@ -474,6 +481,20 @@ function validateNightAction(
   if (!game.aliveIds.has(targetId)) return "Target must be alive.";
   if (!game.settings.allowSelfTarget && targetId === actor.userId) return "You cannot target yourself.";
   return undefined;
+}
+
+
+export function configureGame(interaction: ChatInputCommandInteraction, hideVotes?: boolean): string {
+  const game = interaction.channelId ? gamesByChannel.get(interaction.channelId) : undefined;
+  if (!game) return "No game in this channel.";
+  if (interaction.user.id !== game.hostId) return "Only the host can change game settings.";
+
+  if (typeof hideVotes === "boolean") {
+    game.settings.hideVotes = hideVotes;
+    return `Settings updated: hideVotes is now **${hideVotes ? "ON" : "OFF"}**.`;
+  }
+
+  return `Current settings: hideVotes=**${game.settings.hideVotes ? "ON" : "OFF"}**.`;
 }
 
 export function submitHaunt(interaction: ChatInputCommandInteraction, targetId: string): string {
@@ -532,6 +553,7 @@ export function submitVote(interaction: ChatInputCommandInteraction, targetId: s
   if (!game.aliveIds.has(targetId)) return "Target must be alive.";
 
   game.votes.votesByVoterId.set(interaction.user.id, targetId);
+  if (game.settings.hideVotes) return "🗳️ Vote received.";
   return `🗳️ You voted for <@${targetId}>.`;
 }
 

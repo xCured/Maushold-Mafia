@@ -14,6 +14,7 @@ import {
   actionReminder,
   cancelOrEndGame,
   createGame,
+  configureGame,
   getGame,
   joinGame,
   leaveGame,
@@ -46,24 +47,24 @@ function uiId(action: string, channelId: string): string {
 
 function buildControlPanel(channelId: string) {
   const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(uiId("join", channelId)).setLabel("Join").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(uiId("leave", channelId)).setLabel("Leave").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(uiId("list", channelId)).setLabel("Players").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(uiId("status", channelId)).setLabel("Status").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(uiId("actions", channelId)).setLabel("My Role").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(uiId("join", channelId)).setLabel("Join").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(uiId("leave", channelId)).setLabel("Leave").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(uiId("list", channelId)).setLabel("Players").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(uiId("status", channelId)).setLabel("Status").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(uiId("actions", channelId)).setLabel("My Role").setStyle(ButtonStyle.Primary),
   );
 
   const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(uiId("start", channelId)).setLabel("Start").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(uiId("vote", channelId)).setLabel("Vote").setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId(uiId("unvote", channelId)).setLabel("Unvote").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(uiId("cancel", channelId)).setLabel("End/Cancel").setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(uiId("start", channelId)).setLabel("Start").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(uiId("vote", channelId)).setLabel("Vote").setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(uiId("unvote", channelId)).setLabel("Unvote").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(uiId("cancel", channelId)).setLabel("End/Cancel").setStyle(ButtonStyle.Danger),
   );
 
   const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(uiId("haunt", channelId)).setLabel("Haunt").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(uiId("protect", channelId)).setLabel("Protect").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(uiId("inspect", channelId)).setLabel("Inspect").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(uiId("haunt", channelId)).setLabel("Haunt").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(uiId("protect", channelId)).setLabel("Protect").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(uiId("inspect", channelId)).setLabel("Inspect").setStyle(ButtonStyle.Secondary),
   );
 
   return [row1, row2, row3];
@@ -76,20 +77,20 @@ async function postControlPanel(interaction: ChatInputCommandInteraction): Promi
   await interaction.channel.send({
     embeds: [
       new EmbedBuilder()
-        .setTitle("🐭 Maushold Mafia Control Panel")
-        .setDescription(
-          "Use buttons if slash commands are confusing. Access is still restricted by role/phase/host permissions.",
-        )
-        .setColor(0x9b59b6),
+          .setTitle("🐭 Maushold Mafia Control Panel")
+          .setDescription(
+              "Use buttons if slash commands are confusing. Access is still restricted by role/phase/host permissions.",
+          )
+          .setColor(0x9b59b6),
     ],
     components: buildControlPanel(channelId),
   });
 }
 
 async function openTargetPicker(
-  interaction: ButtonInteraction,
-  mode: "vote" | "haunt" | "protect" | "inspect",
-  channelId: string,
+    interaction: ButtonInteraction,
+    mode: "vote" | "haunt" | "protect" | "inspect",
+    channelId: string,
 ): Promise<void> {
   const game = getGame(channelId);
   if (!game) {
@@ -98,16 +99,16 @@ async function openTargetPicker(
   }
 
   const options = [...game.aliveIds]
-    .filter((id) => id !== interaction.user.id)
-    .map((id) => {
-      const p = game.players.get(id);
-      return {
-        label: p?.displayName ?? id,
-        value: id,
-        description: "Choose this player",
-      };
-    })
-    .slice(0, 25);
+      .filter((id) => id !== interaction.user.id)
+      .map((id) => {
+        const p = game.players.get(id);
+        return {
+          label: p?.displayName ?? id,
+          value: id,
+          description: "Choose this player",
+        };
+      })
+      .slice(0, 25);
 
   if (options.length === 0) {
     await interaction.reply({ content: "No valid targets right now.", ephemeral: true });
@@ -115,9 +116,9 @@ async function openTargetPicker(
   }
 
   const select = new StringSelectMenuBuilder()
-    .setCustomId(uiId(`${mode}_target`, channelId))
-    .setPlaceholder(`Choose a target to ${mode}`)
-    .addOptions(options);
+      .setCustomId(uiId(`${mode}_target`, channelId))
+      .setPlaceholder(`Choose a target to ${mode}`)
+      .addOptions(options);
 
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
   await interaction.reply({ content: `Pick your target for **${mode}**:`, components: [row], ephemeral: true });
@@ -149,6 +150,10 @@ async function handleMafiaCommand(interaction: ChatInputCommandInteraction): Pro
   }
   if (sub === "cancel") return void interaction.reply(await cancelOrEndGame(interaction));
   if (sub === "status") return void interaction.reply(statusText(interaction));
+  if (sub === "config") {
+    const hideVotes = interaction.options.getBoolean("hide_votes");
+    return void interaction.reply({ content: configureGame(interaction, hideVotes ?? undefined), ephemeral: true });
+  }
 
   if (sub === "actions") {
     return void interaction.reply({ content: actionReminder(interaction), ephemeral: true });
@@ -156,10 +161,15 @@ async function handleMafiaCommand(interaction: ChatInputCommandInteraction): Pro
 
   if (sub === "vote") {
     const target = interaction.options.getUser("target", true);
-    return void interaction.reply(submitVote(interaction, target.id));
+    const game = getGame(interaction.channelId);
+    const content = submitVote(interaction, target.id);
+    return void interaction.reply({ content, ephemeral: Boolean(game?.settings.hideVotes) });
   }
 
-  if (sub === "unvote") return void interaction.reply(unvote(interaction));
+  if (sub === "unvote") {
+    const game = getGame(interaction.channelId);
+    return void interaction.reply({ content: unvote(interaction), ephemeral: Boolean(game?.settings.hideVotes) });
+  }
 
   if (sub === "haunt") {
     const target = interaction.options.getUser("target", true);
