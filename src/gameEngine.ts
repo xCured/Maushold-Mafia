@@ -1,7 +1,5 @@
-//TODO Convert to ternary where possible to reduce line count and improve readability
-
-
 import {
+    ChannelType,
     EmbedBuilder,
     type ChatInputCommandInteraction,
     type Client,
@@ -32,36 +30,105 @@ function shuffle<T>(arr: T[]): T[] {
 }
 
 function resetNightActions(game: GameState): void {
-    game.actions = {submittedBy: new Set<Role>()};
+    game.actions = { submittedBy: new Set<Role>() };
 }
 
 function resetVotes(game: GameState): void {
-    game.votes = {votesByVoterId: new Map(), locked: false};
+    game.votes = { votesByVoterId: new Map(), locked: false };
 }
 
 function clearTimers(game: GameState): void {
-    if (game.timers.nightTimer) {
-        clearTimeout(game.timers.nightTimer);
-    }
-    if (game.timers.dayTimer) {
-        clearTimeout(game.timers.dayTimer);
-    }
-    if (game.timers.voteTimer) {
-        clearTimeout(game.timers.voteTimer);
-    }
-    if (game.timers.nightReminder20) {
-        clearTimeout(game.timers.nightReminder20);
-    }
-    if (game.timers.dayReminder60) {
-        clearTimeout(game.timers.dayReminder60);
-    }
-    if (game.timers.dayReminder20) {
-        clearTimeout(game.timers.dayReminder20);
-    }
-    if (game.timers.voteReminder20) {
-        clearTimeout(game.timers.voteReminder20);
-    }
+    if (game.timers.nightTimer) clearTimeout(game.timers.nightTimer);
+    if (game.timers.dayTimer) clearTimeout(game.timers.dayTimer);
+    if (game.timers.voteTimer) clearTimeout(game.timers.voteTimer);
+    if (game.timers.nightReminder20) clearTimeout(game.timers.nightReminder20);
+    if (game.timers.dayReminder60) clearTimeout(game.timers.dayReminder60);
+    if (game.timers.dayReminder20) clearTimeout(game.timers.dayReminder20);
+    if (game.timers.voteReminder20) clearTimeout(game.timers.voteReminder20);
     game.timers = {};
+}
+
+async function createDeadThread(game: GameState): Promise<void> {
+    if (!game.channel) return;
+
+    try {
+        const thread = await game.channel.threads.create({
+            name: `💀 dead-chat-day-${game.dayNumber}`,
+            autoArchiveDuration: 60,
+            type: ChannelType.PrivateThread,
+            invitable: false,
+            reason: "Dead players discussion thread for Maushold Mafia",
+        });
+
+        game.deadThreadId = thread.id;
+        await thread.send("💀 Dead chat is open. Only eliminated players can talk here.");
+    } catch {
+        // Ignore permission/thread creation failures; game can continue without dead thread.
+    }
+}
+
+async function silenceInMainChannel(game: GameState, userId: string): Promise<void> {
+    if (!game.channel?.guild) return;
+
+    try {
+        await game.channel.permissionOverwrites.edit(userId, {
+            SendMessages: false,
+            AddReactions: false,
+            SendMessagesInThreads: false,
+        });
+    } catch {
+        // Ignore permission failures in case bot lacks Manage Channels/Permissions.
+    }
+}
+
+async function addToDeadThread(game: GameState, userId: string): Promise<void> {
+    if (!game.channel?.guild || !game.deadThreadId) return;
+
+    try {
+        const thread = await game.channel.threads.fetch(game.deadThreadId);
+        if (!thread || thread.type !== ChannelType.PrivateThread) return;
+        await thread.members.add(userId);
+    } catch {
+        // Ignore failures to add users to thread (permissions or thread state).
+    }
+}
+
+async function handlePlayerDeath(game: GameState, userId: string): Promise<void> {
+    const player = game.players.get(userId);
+    if (!player || !player.alive) return;
+
+    player.alive = false;
+    game.aliveIds.delete(userId);
+    game.deadIds.add(userId);
+
+    await silenceInMainChannel(game, userId);
+    await addToDeadThread(game, userId);
+}
+
+async function restoreMainChannelPermissions(game: GameState): Promise<void> {
+    if (!game.channel) return;
+
+    for (const player of game.players.values()) {
+        try {
+            await game.channel.permissionOverwrites.delete(player.userId);
+        } catch {
+            // Ignore cleanup failures.
+        }
+    }
+}
+
+async function archiveDeadThread(game: GameState): Promise<void> {
+    if (!game.channel?.guild || !game.deadThreadId) return;
+
+    try {
+        const thread = await game.channel.threads.fetch(game.deadThreadId);
+        if (thread?.isThread()) {
+            await thread.setArchived(true, "Game ended");
+            await thread.setLocked(true, "Game ended");
+        }
+    } catch {
+        // Ignore thread cleanup failures.
+    }
 }
 
 export function getRoleList(nPlayers: number): Role[] {
@@ -71,16 +138,10 @@ export function getRoleList(nPlayers: number): Role[] {
 
     const roles: Role[] = [Role.GENGAR, Role.ALAKAZAM, Role.CHANSEY];
 
-    if (nPlayers >= 8) {
-        roles.push(Role.DITTO);
-    }
-    if (nPlayers >= 11) {
-        roles.push(Role.MIMIKYU);
-    }
+    if (nPlayers >= 8) roles.push(Role.DITTO);
+    if (nPlayers >= 11) roles.push(Role.MIMIKYU);
 
-    while (roles.length < nPlayers) {
-        roles.push(Role.MAUSHOLD);
-    }
+    while (roles.length < nPlayers) roles.push(Role.MAUSHOLD);
     return shuffle(roles);
 }
 
@@ -90,6 +151,75 @@ export function getGame(channelId: string): GameState | undefined {
 
 export function formatRole(role: Role): string {
     return role.toLowerCase().replace("_", " ");
+}
+
+
+async function ensurePrivateRoleThread(game: GameState, player: PlayerState): Promise<string | undefined> {
+    if (!game.channel) return undefined;
+
+    if (player.roleThreadId) {
+        try {
+            const existing = await game.channel.threads.fetch(player.roleThreadId);
+            if (existing?.isThread()) return existing.id;
+        } catch {
+            player.roleThreadId = undefined;
+        }
+    }
+
+    try {
+        const sanitized = player.displayName.toLowerCase().replace(/[^a-z0-9]/g, "-").slice(0, 24) || "player";
+        const thread = await game.channel.threads.create({
+            name: `🔒 role-${sanitized}`,
+            autoArchiveDuration: 60,
+            type: ChannelType.PrivateThread,
+            invitable: false,
+            reason: "Private role thread for Maushold Mafia player",
+        });
+
+        await thread.members.add(player.userId);
+        player.roleThreadId = thread.id;
+        return thread.id;
+    } catch {
+        return undefined;
+    }
+}
+
+async function sendRoleInfoInPrivateThread(game: GameState, player: PlayerState): Promise<void> {
+    const threadId = await ensurePrivateRoleThread(game, player);
+    if (!threadId || !game.channel) return;
+
+    try {
+        const thread = await game.channel.threads.fetch(threadId);
+        if (!thread?.isThread()) return;
+        const roleCfg = ROLE_CONFIGS[player.role];
+        const investigationNote = player.lastInvestigationNote ? `
+
+${player.lastInvestigationNote}` : "";
+        await thread.send(
+            `🎭 Your role is **${formatRole(player.role)}** (${player.faction}).
+${roleCfg.description}
+${roleCfg.commandHint}${investigationNote}`,
+        );
+    } catch {
+        // Ignore if role thread messaging fails.
+    }
+}
+
+async function archiveRoleThreads(game: GameState): Promise<void> {
+    if (!game.channel) return;
+
+    for (const player of game.players.values()) {
+        if (!player.roleThreadId) continue;
+        try {
+            const thread = await game.channel.threads.fetch(player.roleThreadId);
+            if (thread?.isThread()) {
+                await thread.setArchived(true, "Game ended");
+                await thread.setLocked(true, "Game ended");
+            }
+        } catch {
+            // Ignore role-thread cleanup failures.
+        }
+    }
 }
 
 function aliveMentions(game: GameState): string {
@@ -102,23 +232,13 @@ function checkWinConditions(game: GameState): string | undefined {
 
     for (const id of game.aliveIds) {
         const p = game.players.get(id);
-        if (!p) {
-            continue;
-        }
-        if (p.faction === Faction.TOWN) {
-            aliveTown += 1;
-        }
-        if (p.faction === Faction.EVIL) {
-            aliveEvil += 1;
-        }
+        if (!p) continue;
+        if (p.faction === Faction.TOWN) aliveTown += 1;
+        if (p.faction === Faction.EVIL) aliveEvil += 1;
     }
 
-    if (aliveEvil === 0) {
-        return "🏆 Town wins! All EVIL roles have been eliminated.";
-    }
-    if (aliveEvil >= aliveTown) {
-        return "💀 Evil wins! Gengar's side now controls the game.";
-    }
+    if (aliveEvil === 0) return "🏆 Town wins! All EVIL roles have been eliminated.";
+    if (aliveEvil >= aliveTown) return "💀 Evil wins! Gengar's side now controls the game.";
     return undefined;
 }
 
@@ -142,6 +262,9 @@ async function endGame(game: GameState, reason: string): Promise<void> {
         });
     }
 
+    await restoreMainChannelPermissions(game);
+    await archiveDeadThread(game);
+    await archiveRoleThreads(game);
     gamesByChannel.delete(game.channelId);
 }
 
@@ -232,20 +355,12 @@ async function endNightAndResolve(client: Client, game: GameState): Promise<void
     let attackedButSaved = false;
 
     if (killTarget) {
-        if (protectedTarget && protectedTarget === killTarget) {
-            attackedButSaved = true;
-        } else {
-            killedId = killTarget;
-        }
+        if (protectedTarget && protectedTarget === killTarget) attackedButSaved = true;
+        else killedId = killTarget;
     }
 
     if (killedId && game.aliveIds.has(killedId)) {
-        const dead = game.players.get(killedId);
-        if (dead) {
-            dead.alive = false;
-            game.aliveIds.delete(killedId);
-            game.deadIds.add(killedId);
-        }
+        await handlePlayerDeath(game, killedId);
     }
 
     if (inspectTarget) {
@@ -254,7 +369,7 @@ async function endNightAndResolve(client: Client, game: GameState): Promise<void
         if (investigator && inspected) {
             const apparentFaction = inspected.role === Role.DITTO ? Faction.TOWN : inspected.faction;
             investigator.lastInvestigationNote = `🔮 Your vision reveals that **${inspected.displayName}** appears as **${apparentFaction}**.`;
-            await game.channel?.send(`🔮 <@${investigator.userId}>, your vision is ready. Use **/mafia actions** (or **My Role** button) to view it privately.`);
+            await sendRoleInfoInPrivateThread(game, investigator);
         }
     }
 
@@ -284,9 +399,7 @@ async function endNightAndResolve(client: Client, game: GameState): Promise<void
 async function endVotingAndResolve(client: Client, game: GameState): Promise<void> {
     const tally = new Map<string, number>();
     for (const [voter, target] of game.votes.votesByVoterId.entries()) {
-        if (!game.aliveIds.has(voter) || !game.aliveIds.has(target)) {
-            continue;
-        }
+        if (!game.aliveIds.has(voter) || !game.aliveIds.has(target)) continue;
         tally.set(target, (tally.get(target) ?? 0) + 1);
     }
 
@@ -318,9 +431,7 @@ async function endVotingAndResolve(client: Client, game: GameState): Promise<voi
         return;
     }
 
-    eliminated.alive = false;
-    game.aliveIds.delete(topTarget);
-    game.deadIds.add(topTarget);
+    await handlePlayerDeath(game, topTarget);
 
     await game.channel?.send(
         `🔨 <@${topTarget}> was banished by vote.${game.settings.revealRoles ? ` Role: **${formatRole(eliminated.role)}**.` : ""}`,
@@ -370,11 +481,12 @@ export async function createGame(interaction: ChatInputCommandInteraction): Prom
         players: new Map([[interaction.user.id, hostPlayer]]),
         aliveIds: new Set([interaction.user.id]),
         deadIds: new Set(),
-        actions: {submittedBy: new Set<Role>()},
-        votes: {votesByVoterId: new Map(), locked: false},
+        actions: { submittedBy: new Set<Role>() },
+        votes: { votesByVoterId: new Map(), locked: false },
         timers: {},
-        settings: {...DEFAULT_SETTINGS},
+        settings: { ...DEFAULT_SETTINGS },
         channel: interaction.channel as TextChannel,
+        deadThreadId: undefined,
     };
 
     gamesByChannel.set(interaction.channelId, game);
@@ -383,15 +495,9 @@ export async function createGame(interaction: ChatInputCommandInteraction): Prom
 
 export function joinGame(interaction: ChatInputCommandInteraction): string {
     const game = interaction.channelId ? gamesByChannel.get(interaction.channelId) : undefined;
-    if (!game) {
-        return "No game in this channel. Use /mafia create.";
-    }
-    if (game.status !== GameStatus.LOBBY) {
-        return "Game already started. You can't join now.";
-    }
-    if (game.players.has(interaction.user.id)) {
-        return "You're already in the lobby.";
-    }
+    if (!game) return "No game in this channel. Use /mafia create.";
+    if (game.status !== GameStatus.LOBBY) return "Game already started. You can't join now.";
+    if (game.players.has(interaction.user.id)) return "You're already in the lobby.";
 
     const displayName = (interaction.member as GuildMember | null)?.displayName ?? interaction.user.username;
     const player: PlayerState = {
@@ -407,74 +513,65 @@ export function joinGame(interaction: ChatInputCommandInteraction): string {
     return `${displayName} joined the lobby. (${game.players.size} players)`;
 }
 
-export function leaveGame(interaction: ChatInputCommandInteraction): string {
+export async function leaveGame(interaction: ChatInputCommandInteraction): Promise<string> {
     const game = interaction.channelId ? gamesByChannel.get(interaction.channelId) : undefined;
-    if (!game) {
-        return "No game in this channel.";
-    }
+    if (!game) return "No game in this channel.";
 
     const player = game.players.get(interaction.user.id);
-    if (!player) {
-        return "You're not in this game.";
-    }
+    if (!player) return "You're not in this game.";
 
     if (game.status === GameStatus.LOBBY) {
         game.players.delete(interaction.user.id);
         game.aliveIds.delete(interaction.user.id);
 
         if (game.players.size === 0) {
+            await restoreMainChannelPermissions(game);
+            await archiveDeadThread(game);
+            await archiveRoleThreads(game);
             gamesByChannel.delete(game.channelId);
             return "You left. Lobby is empty, so it was removed.";
         }
 
         if (game.hostId === interaction.user.id) {
             const nextHost = game.players.keys().next().value;
-            if (nextHost) {
-                game.hostId = nextHost;
-            }
+            if (nextHost) game.hostId = nextHost;
         }
 
         return "You left the lobby.";
     }
 
-    player.alive = false;
-    game.aliveIds.delete(player.userId);
-    game.deadIds.add(player.userId);
+    await handlePlayerDeath(game, player.userId);
+    await game.channel?.send(`🏃 <@${player.userId}> fled the kitchen and joined the dead chat.`);
+
+    const winner = checkWinConditions(game);
+    if (winner) {
+        await endGame(game, winner);
+        return "You fled the kitchen and are now considered dead.";
+    }
+
     return "You fled the kitchen and are now considered dead.";
 }
 
 export function listLobby(interaction: ChatInputCommandInteraction): string {
     const game = interaction.channelId ? gamesByChannel.get(interaction.channelId) : undefined;
-    if (!game) {
-        return "No game in this channel.";
-    }
+    if (!game) return "No game in this channel.";
     const players = [...game.players.values()].map((p) => `• ${p.displayName}`).join("\n");
     return `Host: <@${game.hostId}>\nPlayers (${game.players.size}):\n${players}`;
 }
 
 export async function startGame(interaction: ChatInputCommandInteraction, client: Client): Promise<string> {
     const game = interaction.channelId ? gamesByChannel.get(interaction.channelId) : undefined;
-    if (!game) {
-        return "No game in this channel.";
-    }
-    if (game.status !== GameStatus.LOBBY) {
-        return "Game has already started.";
-    }
-    if (game.hostId !== interaction.user.id) {
-        return "Only the host can start the game.";
-    }
-    if (game.players.size < MIN_PLAYERS) {
-        return `Need at least ${MIN_PLAYERS} players to start.`;
-    }
+    if (!game) return "No game in this channel.";
+    if (game.status !== GameStatus.LOBBY) return "Game has already started.";
+    if (game.hostId !== interaction.user.id) return "Only the host can start the game.";
+    if (game.players.size < MIN_PLAYERS) return `Need at least ${MIN_PLAYERS} players to start.`;
 
     const roles = getRoleList(game.players.size);
     const ids = [...game.players.keys()];
 
     ids.forEach((id, idx) => {
         const player = game.players.get(id);
-        if (!player) {
-            return;
-        }
+        if (!player) return;
         player.role = roles[idx];
         player.faction = ROLE_CONFIGS[roles[idx]].faction;
         player.alive = true;
@@ -484,16 +581,20 @@ export async function startGame(interaction: ChatInputCommandInteraction, client
     game.phase = GamePhase.NIGHT;
     game.dayNumber = 1;
 
-    await game.channel?.send("🎮 Game started! Night 1 begins.\nEveryone: use **/mafia actions** (or the **My Role** button) to see your private role popup in this channel.");
+    await createDeadThread(game);
+    await game.channel?.send("🎮 Game started! Night 1 begins.\nEach player will receive an automatic private role thread in this channel.\nEliminated players will be moved to a private dead-chat thread and muted in this main channel.");
+
+    for (const player of game.players.values()) {
+        await sendRoleInfoInPrivateThread(game, player);
+    }
+
     await beginNight(client, game);
     return "Game started successfully.";
 }
 
 export async function cancelOrEndGame(interaction: ChatInputCommandInteraction, forced = false): Promise<string> {
     const game = interaction.channelId ? gamesByChannel.get(interaction.channelId) : undefined;
-    if (!game) {
-        return "No game in this channel.";
-    }
+    if (!game) return "No game in this channel.";
 
     const member = interaction.member as GuildMember | null;
     const canForce = Boolean(member?.permissions.has("ManageGuild"));
@@ -502,15 +603,16 @@ export async function cancelOrEndGame(interaction: ChatInputCommandInteraction, 
     }
 
     clearTimers(game);
+    await restoreMainChannelPermissions(game);
+    await archiveDeadThread(game);
+    await archiveRoleThreads(game);
     gamesByChannel.delete(game.channelId);
     return "Game ended and cleaned up.";
 }
 
 export function statusText(interaction: ChatInputCommandInteraction): string {
     const game = interaction.channelId ? gamesByChannel.get(interaction.channelId) : undefined;
-    if (!game) {
-        return "No game in this channel.";
-    }
+    if (!game) return "No game in this channel.";
 
     return [
         `Status: **${game.status}**`,
@@ -520,16 +622,79 @@ export function statusText(interaction: ChatInputCommandInteraction): string {
     ].join("\n");
 }
 
-export function actionReminder(interaction: ChatInputCommandInteraction): string {
+
+export function tallyText(interaction: ChatInputCommandInteraction): string {
     const game = interaction.channelId ? gamesByChannel.get(interaction.channelId) : undefined;
-    if (!game) {
-        return "No game in this channel.";
+    if (!game) return "No game in this channel.";
+    if (game.status !== GameStatus.RUNNING) return "Game is not running.";
+    if (game.phase !== GamePhase.DAY && game.phase !== GamePhase.VOTING) return "Tally is available during DAY or VOTING.";
+    if (game.settings.hideVotes) return "🕶️ Vote tally is hidden right now (hideVotes is ON).";
+
+    const tally = new Map<string, number>();
+    for (const [voter, target] of game.votes.votesByVoterId.entries()) {
+        if (!game.aliveIds.has(voter) || !game.aliveIds.has(target)) continue;
+        tally.set(target, (tally.get(target) ?? 0) + 1);
     }
 
-    const player = game.players.get(interaction.user.id);
-    if (!player) {
-        return "You're not in this game.";
+    if (tally.size === 0) return "No valid votes have been cast yet.";
+
+    const lines = [...tally.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([targetId, count]) => `• <@${targetId}>: **${count}**`)
+        .join("\n");
+
+    return `🗳️ Current tally:\n${lines}`;
+}
+
+export function helpText(interaction: ChatInputCommandInteraction): string {
+    const game = interaction.channelId ? gamesByChannel.get(interaction.channelId) : undefined;
+    if (!game) {
+        return [
+            "🐭 **Maushold Mafia Quick Help**",
+            "• Start with `/mafia create`, then players use `/mafia join`.",
+            "• Host runs `/mafia start` once enough players are in.",
+            "• Use `/mafia panel` for clickable controls.",
+        ].join("\n");
     }
+
+    if (game.status === GameStatus.LOBBY) {
+        return [
+            "🐭 **Lobby Help**",
+            "• `/mafia join` to enter, `/mafia leave` to leave.",
+            "• Host: `/mafia start` when ready.",
+            "• `/mafia list` to view players.",
+        ].join("\n");
+    }
+
+    if (game.phase === GamePhase.NIGHT) {
+        return [
+            "🌙 **Night Help**",
+            "• Gengar: `/mafia haunt @user`",
+            "• Chansey: `/mafia protect @user`",
+            "• Alakazam: `/mafia inspect @user`",
+            "• Everyone can run `/mafia actions` to see private role info.",
+        ].join("\n");
+    }
+
+    if (game.phase === GamePhase.DAY || game.phase === GamePhase.VOTING) {
+        return [
+            "🧀 **Day/Voting Help**",
+            "• Vote with `/mafia vote @user` and change anytime.",
+            "• Remove vote with `/mafia unvote`.",
+            "• Check vote counts with `/mafia tally` (if votes are public).",
+            "• Use `/mafia status` for phase + alive list.",
+        ].join("\n");
+    }
+
+    return "Use `/mafia status` and `/mafia actions` for current guidance.";
+}
+
+export function actionReminder(interaction: ChatInputCommandInteraction): string {
+    const game = interaction.channelId ? gamesByChannel.get(interaction.channelId) : undefined;
+    if (!game) return "No game in this channel.";
+
+    const player = game.players.get(interaction.user.id);
+    if (!player) return "You're not in this game.";
     const roleCfg = ROLE_CONFIGS[player.role];
     const investigationNote = player.lastInvestigationNote ? `\n\n${player.lastInvestigationNote}` : "";
     return `Role: **${formatRole(player.role)}** (${player.faction})\n${roleCfg.description}\n${roleCfg.commandHint}${investigationNote}`;
@@ -541,36 +706,20 @@ function validateNightAction(
     targetId: string,
     requiredRole: Role,
 ): string | undefined {
-    if (game.status !== GameStatus.RUNNING) {
-        return "Game is not running.";
-    }
-    if (game.phase !== GamePhase.NIGHT) {
-        return "Night actions can only be used during NIGHT.";
-    }
-    if (!actor.alive) {
-        return "Dead players can't act.";
-    }
-    if (actor.role !== requiredRole) {
-        return `Only ${formatRole(requiredRole)} can use this command.`;
-    }
-    if (!game.aliveIds.has(targetId)) {
-        return "Target must be alive.";
-    }
-    if (!game.settings.allowSelfTarget && targetId === actor.userId) {
-        return "You cannot target yourself.";
-    }
+    if (game.status !== GameStatus.RUNNING) return "Game is not running.";
+    if (game.phase !== GamePhase.NIGHT) return "Night actions can only be used during NIGHT.";
+    if (!actor.alive) return "Dead players can't act.";
+    if (actor.role !== requiredRole) return `Only ${formatRole(requiredRole)} can use this command.`;
+    if (!game.aliveIds.has(targetId)) return "Target must be alive.";
+    if (!game.settings.allowSelfTarget && targetId === actor.userId) return "You cannot target yourself.";
     return undefined;
 }
 
 
 export function configureGame(interaction: ChatInputCommandInteraction, hideVotes?: boolean): string {
     const game = interaction.channelId ? gamesByChannel.get(interaction.channelId) : undefined;
-    if (!game) {
-        return "No game in this channel.";
-    }
-    if (interaction.user.id !== game.hostId) {
-        return "Only the host can change game settings.";
-    }
+    if (!game) return "No game in this channel.";
+    if (interaction.user.id !== game.hostId) return "Only the host can change game settings.";
 
     if (typeof hideVotes === "boolean") {
         game.settings.hideVotes = hideVotes;
@@ -582,18 +731,12 @@ export function configureGame(interaction: ChatInputCommandInteraction, hideVote
 
 export function submitHaunt(interaction: ChatInputCommandInteraction, targetId: string): string {
     const game = interaction.channelId ? gamesByChannel.get(interaction.channelId) : undefined;
-    if (!game) {
-        return "No game in this channel.";
-    }
+    if (!game) return "No game in this channel.";
     const actor = game.players.get(interaction.user.id);
-    if (!actor) {
-        return "You're not in this game.";
-    }
+    if (!actor) return "You're not in this game.";
 
     const err = validateNightAction(game, actor, targetId, Role.GENGAR);
-    if (err) {
-        return err;
-    }
+    if (err) return err;
 
     game.actions.gengarTargetId = targetId;
     game.actions.submittedBy.add(Role.GENGAR);
@@ -602,18 +745,12 @@ export function submitHaunt(interaction: ChatInputCommandInteraction, targetId: 
 
 export function submitProtect(interaction: ChatInputCommandInteraction, targetId: string): string {
     const game = interaction.channelId ? gamesByChannel.get(interaction.channelId) : undefined;
-    if (!game) {
-        return "No game in this channel.";
-    }
+    if (!game) return "No game in this channel.";
     const actor = game.players.get(interaction.user.id);
-    if (!actor) {
-        return "You're not in this game.";
-    }
+    if (!actor) return "You're not in this game.";
 
     const err = validateNightAction(game, actor, targetId, Role.CHANSEY);
-    if (err) {
-        return err;
-    }
+    if (err) return err;
 
     if (game.settings.noRepeatProtect && actor.lastProtectedTargetId === targetId) {
         return "Chansey cannot protect the same target on consecutive nights.";
@@ -627,18 +764,12 @@ export function submitProtect(interaction: ChatInputCommandInteraction, targetId
 
 export function submitInspect(interaction: ChatInputCommandInteraction, targetId: string): string {
     const game = interaction.channelId ? gamesByChannel.get(interaction.channelId) : undefined;
-    if (!game) {
-        return "No game in this channel.";
-    }
+    if (!game) return "No game in this channel.";
     const actor = game.players.get(interaction.user.id);
-    if (!actor) {
-        return "You're not in this game.";
-    }
+    if (!actor) return "You're not in this game.";
 
     const err = validateNightAction(game, actor, targetId, Role.ALAKAZAM);
-    if (err) {
-        return err;
-    }
+    if (err) return err;
 
     game.actions.alakazamTargetId = targetId;
     game.actions.submittedBy.add(Role.ALAKAZAM);
@@ -647,34 +778,20 @@ export function submitInspect(interaction: ChatInputCommandInteraction, targetId
 
 export function submitVote(interaction: ChatInputCommandInteraction, targetId: string): string {
     const game = interaction.channelId ? gamesByChannel.get(interaction.channelId) : undefined;
-    if (!game) {
-        return "No game in this channel.";
-    }
-    if (game.status !== GameStatus.RUNNING) {
-        return "Game is not running.";
-    }
-    if (game.phase !== GamePhase.DAY && game.phase !== GamePhase.VOTING) {
-        return "Voting is not open right now.";
-    }
-    if (!game.aliveIds.has(interaction.user.id)) {
-        return "Only alive players can vote.";
-    }
-    if (!game.aliveIds.has(targetId)) {
-        return "Target must be alive.";
-    }
+    if (!game) return "No game in this channel.";
+    if (game.status !== GameStatus.RUNNING) return "Game is not running.";
+    if (game.phase !== GamePhase.DAY && game.phase !== GamePhase.VOTING) return "Voting is not open right now.";
+    if (!game.aliveIds.has(interaction.user.id)) return "Only alive players can vote.";
+    if (!game.aliveIds.has(targetId)) return "Target must be alive.";
 
     game.votes.votesByVoterId.set(interaction.user.id, targetId);
-    if (game.settings.hideVotes) {
-        return "🗳️ Vote received.";
-    }
+    if (game.settings.hideVotes) return "🗳️ Vote received.";
     return `🗳️ You voted for <@${targetId}>.`;
 }
 
 export function unvote(interaction: ChatInputCommandInteraction): string {
     const game = interaction.channelId ? gamesByChannel.get(interaction.channelId) : undefined;
-    if (!game) {
-        return "No game in this channel.";
-    }
+    if (!game) return "No game in this channel.";
     game.votes.votesByVoterId.delete(interaction.user.id);
     return "Vote removed.";
 }
