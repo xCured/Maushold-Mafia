@@ -4,9 +4,9 @@ Node.js + TypeScript Discord bot for a Pokémon-themed social deduction game.
 
 ## New: UI-first flow for non-technical players
 You can still use slash commands, but now you can run games mostly from a clickable panel:
-- Buttons for **Join / Leave / Start / Vote / Role actions / Status**
+- Buttons for **Join / Leave / Start / Vote / Role actions / Status / Help**
 - Target pickers via dropdown menus for vote + night actions
-- Role info is shown as an in-channel private popup via **/mafia actions** or **My Role** button (instead of DMs)
+- On game start, the bot automatically creates a private role thread per player and posts their role there (no click required)
 - Permission and phase checks are still enforced (host-only start, role-only night actions, alive-only voting, etc.)
 
 Use either:
@@ -30,6 +30,7 @@ Use either:
 - Tie vote => no elimination.
 - Phase reminders: Night (20s), Day (60s + 20s), Voting (20s).
 - Optional hidden voting: host can toggle with `/mafia config hide_votes:true|false`.
+- Dead players are moved to a private dead-chat thread and muted in the main game channel.
 - Protection rule: attacked + protected => survive, generic survival message.
 - Role reveal on death (enabled by default).
 
@@ -67,6 +68,8 @@ Use either:
     - `/mafia cancel`
 - Runtime:
     - `/mafia status`
+    - `/mafia help`
+    - `/mafia tally`
     - `/mafia config hide_votes:true|false`
     - `/mafia actions`
     - `/mafia vote @user`

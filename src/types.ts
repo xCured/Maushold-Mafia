@@ -55,6 +55,7 @@ export interface PlayerState {
   copiedRole?: Role;
   dmOk?: boolean;
   lastInvestigationNote?: string;
+  roleThreadId?: string;
 }
 
 export interface NightActions {
@@ -94,6 +95,7 @@ export interface GameState {
   settings: GameSettings;
   channel?: TextChannel;
   winnerText?: string;
+  deadThreadId?: string;
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {
