@@ -1,6 +1,7 @@
 import {
     ChannelType,
     EmbedBuilder,
+    PermissionFlagsBits,
     type ChatInputCommandInteraction,
     type Client,
     type GuildMember,
@@ -74,12 +75,14 @@ async function lockMainChannelToGamePlayers(game: GameState): Promise<void> {
         await game.channel.permissionOverwrites.edit(game.channel.guild.roles.everyone.id, {
             SendMessages: false,
             AddReactions: false,
+            SendMessagesInThreads: false,
         });
 
         for (const player of game.players.values()) {
             await game.channel.permissionOverwrites.edit(player.userId, {
                 SendMessages: true,
                 AddReactions: true,
+                SendMessagesInThreads: true,
             });
         }
 
@@ -97,6 +100,7 @@ async function silenceInMainChannel(game: GameState, userId: string): Promise<vo
         await game.channel.permissionOverwrites.edit(userId, {
             SendMessages: false,
             AddReactions: false,
+            SendMessagesInThreads: false,
         });
     } catch {
         // Ignore permission failures in case bot lacks Manage Channels/Permissions.
@@ -132,7 +136,11 @@ async function restoreMainChannelPermissions(game: GameState): Promise<void> {
 
     for (const player of game.players.values()) {
         try {
-            await game.channel.permissionOverwrites.delete(player.userId);
+            await game.channel.permissionOverwrites.edit(player.userId, {
+                SendMessages: null,
+                AddReactions: null,
+                SendMessagesInThreads: null,
+            });
         } catch {
             // Ignore cleanup failures.
         }
@@ -140,7 +148,11 @@ async function restoreMainChannelPermissions(game: GameState): Promise<void> {
 
     if (game.channelLockedForGame) {
         try {
-            await game.channel.permissionOverwrites.delete(game.channel.guild.roles.everyone.id);
+            await game.channel.permissionOverwrites.edit(game.channel.guild.roles.everyone.id, {
+                SendMessages: null,
+                AddReactions: null,
+                SendMessagesInThreads: null,
+            });
         } catch {
             // Ignore cleanup failures.
         }
@@ -321,7 +333,7 @@ async function beginVoting(client: Client, game: GameState): Promise<void> {
         embeds: [
             new EmbedBuilder()
                 .setTitle("🔄 New Phase: 🗳️ Voting")
-                .setDescription("Voting has started. Use `/mafia vote @user` or the Vote button. Ties result in no elimination.")
+                .setDescription("Voting has started. Use `/mafia vote` or the Vote button. Ties result in no elimination.")
                 .setColor(0xf4d03f),
         ],
     });
@@ -497,8 +509,12 @@ async function endVotingAndResolve(client: Client, game: GameState): Promise<voi
 }
 
 export async function createGame(interaction: ChatInputCommandInteraction): Promise<string> {
-    if (!interaction.guildId || !interaction.channelId || !interaction.channel?.isTextBased()) {
+    if (!interaction.guildId || !interaction.channelId || !interaction.channel) {
         return "This command must be used in a guild text channel.";
+    }
+
+    if (interaction.channel.type !== ChannelType.GuildText) {
+        return "Please run `/mafia create` in a standard server text channel (not a thread/DM).";
     }
 
     if (gamesByChannel.has(interaction.channelId)) {
@@ -643,7 +659,7 @@ export async function cancelOrEndGame(interaction: ChatInputCommandInteraction, 
     if (!game) return "No game in this channel.";
 
     const member = interaction.member as GuildMember | null;
-    const canForce = Boolean(member?.permissions.has("ManageGuild"));
+    const canForce = Boolean(member?.permissions.has(PermissionFlagsBits.ManageGuild));
     if (interaction.user.id !== game.hostId && !canForce && !forced) {
         return "Only host or server mods can end/cancel the game.";
     }
