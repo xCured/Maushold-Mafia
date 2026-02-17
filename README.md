@@ -81,4 +81,4 @@ Use either:
 
 ## Notes
 - Game state is in-memory per channel and resets on process restart.
-- Role delivery is interaction-based (ephemeral popups in-channel) rather than DM-first.
+- Role delivery is automatic via private per-player threads in the game channel (no DM required).

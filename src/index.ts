@@ -100,8 +100,10 @@ async function openTargetPicker(
         return;
     }
 
+    const allowSelf = mode === "vote" || game.settings.allowSelfTarget;
+
     const options = [...game.aliveIds]
-        .filter((id) => id !== interaction.user.id)
+        .filter((id) => allowSelf || id !== interaction.user.id)
         .map((id) => {
             const p = game.players.get(id);
             return {
