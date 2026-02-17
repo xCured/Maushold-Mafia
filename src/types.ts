@@ -96,6 +96,7 @@ export interface GameState {
   channel?: TextChannel;
   winnerText?: string;
   deadThreadId?: string;
+  channelLockedForGame?: boolean;
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {

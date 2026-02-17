@@ -4,10 +4,10 @@ Node.js + TypeScript Discord bot for a Pokémon-themed social deduction game.
 
 ## New: UI-first flow for non-technical players
 You can still use slash commands, but now you can run games mostly from a clickable panel:
-- Buttons for **Join / Leave / Start / Vote / Role actions / Status / Help**
+- Buttons for **Join / Leave / Start / Vote / Role actions / Status**
 - Target pickers via dropdown menus for vote + night actions
 - On game start, the bot automatically creates a private role thread per player and posts their role there (no click required)
-- Permission and phase checks are still enforced (host-only start, role-only night actions, alive-only voting, etc.)
+- Permission and phase checks are still enforced (host-only start, role-only night actions, voting during VOTING phase, etc.)
 
 Use either:
 - `/mafia create` (creates lobby + posts control panel)
@@ -26,11 +26,13 @@ Use either:
     - 8–10: + Ditto
     - 11–14: + Mimikyu
 - Ditto mask mechanic: appears as TOWN to Alakazam.
+- EVIL teammate reveal: Gengar and Ditto are told who their EVIL ally is in their private role info.
 - Mimikyu instant win if eliminated by day vote.
 - Tie vote => no elimination.
 - Phase reminders: Night (20s), Day (60s + 20s), Voting (20s).
 - Optional hidden voting: host can toggle with `/mafia config hide_votes:true|false`.
 - Dead players are moved to a private dead-chat thread and muted in the main game channel.
+- While a game is running, the channel is locked to game participants only.
 - Protection rule: attacked + protected => survive, generic survival message.
 - Role reveal on death (enabled by default).
 
@@ -68,11 +70,9 @@ Use either:
     - `/mafia cancel`
 - Runtime:
     - `/mafia status`
-    - `/mafia help`
-    - `/mafia tally`
     - `/mafia config hide_votes:true|false`
     - `/mafia actions`
-    - `/mafia vote @user`
+    - `/mafia vote` (autocomplete shows alive players only)
     - `/mafia unvote`
 - Night actions:
     - `/mafia haunt @user`
