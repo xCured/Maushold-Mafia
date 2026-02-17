@@ -6,6 +6,7 @@ import {
     EmbedBuilder,
     GatewayIntentBits,
     StringSelectMenuBuilder,
+    type AutocompleteInteraction,
     type ButtonInteraction,
     type ChatInputCommandInteraction,
     type StringSelectMenuInteraction,
@@ -22,8 +23,6 @@ import {
     startGame,
     statusText,
     submitHaunt,
-    tallyText,
-    helpText,
     submitInspect,
     submitProtect,
     submitVote,
@@ -61,7 +60,6 @@ function buildControlPanel(channelId: string) {
         new ButtonBuilder().setCustomId(uiId("vote", channelId)).setLabel("Vote").setStyle(ButtonStyle.Danger),
         new ButtonBuilder().setCustomId(uiId("unvote", channelId)).setLabel("Unvote").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(uiId("cancel", channelId)).setLabel("End/Cancel").setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId(uiId("help", channelId)).setLabel("Help").setStyle(ButtonStyle.Primary),
     );
 
     const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -154,8 +152,6 @@ async function handleMafiaCommand(interaction: ChatInputCommandInteraction): Pro
     }
     if (sub === "cancel") return void interaction.reply(await cancelOrEndGame(interaction));
     if (sub === "status") return void interaction.reply(statusText(interaction));
-    if (sub === "help") return void interaction.reply({ content: helpText(interaction), ephemeral: true });
-    if (sub === "tally") return void interaction.reply({ content: tallyText(interaction), ephemeral: true });
     if (sub === "config") {
         const hideVotes = interaction.options.getBoolean("hide_votes");
         return void interaction.reply({ content: configureGame(interaction, hideVotes ?? undefined), ephemeral: true });
@@ -166,9 +162,9 @@ async function handleMafiaCommand(interaction: ChatInputCommandInteraction): Pro
     }
 
     if (sub === "vote") {
-        const target = interaction.options.getUser("target", true);
+        const targetId = interaction.options.getString("target", true);
         const game = getGame(interaction.channelId);
-        const content = submitVote(interaction, target.id);
+        const content = submitVote(interaction, targetId);
         return void interaction.reply({ content, ephemeral: Boolean(game?.settings.hideVotes) });
     }
 
@@ -213,7 +209,6 @@ async function handleUiButton(interaction: ButtonInteraction): Promise<void> {
     }
     if (action === "cancel") return void interaction.reply(await cancelOrEndGame(interaction as unknown as ChatInputCommandInteraction));
     if (action === "status") return void interaction.reply({ content: statusText(interaction as unknown as ChatInputCommandInteraction), ephemeral: true });
-    if (action === "help") return void interaction.reply({ content: helpText(interaction as unknown as ChatInputCommandInteraction), ephemeral: true });
     if (action === "actions") return void interaction.reply({ content: actionReminder(interaction as unknown as ChatInputCommandInteraction), ephemeral: true });
     if (action === "unvote") return void interaction.reply({ content: unvote(interaction as unknown as ChatInputCommandInteraction), ephemeral: true });
 
@@ -226,6 +221,11 @@ async function handleUiSelect(interaction: StringSelectMenuInteraction): Promise
     const [prefix, action, channelId] = interaction.customId.split(":");
     if (prefix !== UI_PREFIX) return;
 
+    if (interaction.channelId !== channelId) {
+        await interaction.reply({ content: "This picker belongs to a different channel.", ephemeral: true });
+        return;
+    }
+
     const targetId = interaction.values[0];
     const fake = interaction as unknown as ChatInputCommandInteraction;
 
@@ -233,10 +233,33 @@ async function handleUiSelect(interaction: StringSelectMenuInteraction): Promise
     if (action === "haunt_target") return void interaction.update({ content: submitHaunt(fake, targetId), components: [] });
     if (action === "protect_target") return void interaction.update({ content: submitProtect(fake, targetId), components: [] });
     if (action === "inspect_target") return void interaction.update({ content: submitInspect(fake, targetId), components: [] });
+}
 
-    if (interaction.channelId !== channelId) {
-        await interaction.reply({ content: "This picker belongs to a different channel.", ephemeral: true });
+async function handleVoteAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
+    if (interaction.commandName !== "mafia") return;
+
+    const sub = interaction.options.getSubcommand(false);
+    if (sub !== "vote") {
+        await interaction.respond([]);
+        return;
     }
+
+    const game = getGame(interaction.channelId ?? "");
+    if (!game || game.status !== "RUNNING") {
+        await interaction.respond([]);
+        return;
+    }
+
+    const focused = interaction.options.getFocused().toLowerCase();
+    const choices = [...game.aliveIds]
+        .map((id) => {
+            const p = game.players.get(id);
+            return { name: p?.displayName ?? id, value: id };
+        })
+        .filter((c) => c.name.toLowerCase().includes(focused))
+        .slice(0, 25);
+
+    await interaction.respond(choices);
 }
 
 client.once("ready", () => {
@@ -245,6 +268,11 @@ client.once("ready", () => {
 
 client.on("interactionCreate", async (interaction) => {
     try {
+        if (interaction.isAutocomplete()) {
+            await handleVoteAutocomplete(interaction);
+            return;
+        }
+
         if (interaction.isChatInputCommand() && interaction.commandName === "mafia") {
             await handleMafiaCommand(interaction);
             return;

@@ -5,14 +5,12 @@ export const mafiaCommand = new SlashCommandBuilder()
     .setDescription("Maushold Mafia game commands")
     .addSubcommand((s) => s.setName("create").setDescription("Create a lobby in this channel"))
     .addSubcommand((s) => s.setName("panel").setDescription("Post a clickable game control panel"))
-    .addSubcommand((s) => s.setName("help").setDescription("Show a quick guide for current phase and controls"))
     .addSubcommand((s) => s.setName("join").setDescription("Join the current lobby"))
     .addSubcommand((s) => s.setName("leave").setDescription("Leave lobby or flee active game"))
     .addSubcommand((s) => s.setName("list").setDescription("List lobby players"))
     .addSubcommand((s) => s.setName("start").setDescription("Start game (host only)"))
     .addSubcommand((s) => s.setName("cancel").setDescription("Cancel/End game (host/mod)"))
     .addSubcommand((s) => s.setName("status").setDescription("Show current game status"))
-    .addSubcommand((s) => s.setName("tally").setDescription("Show current vote counts (if votes are public)"))
     .addSubcommand((s) =>
         s
             .setName("config")
@@ -24,7 +22,13 @@ export const mafiaCommand = new SlashCommandBuilder()
         s
             .setName("vote")
             .setDescription("Vote a player")
-            .addUserOption((o) => o.setName("target").setDescription("Player to vote").setRequired(true)),
+            .addStringOption((o) =>
+                o
+                    .setName("target")
+                    .setDescription("Alive player to vote")
+                    .setRequired(true)
+                    .setAutocomplete(true),
+            ),
     )
     .addSubcommand((s) => s.setName("unvote").setDescription("Remove your vote"))
     .addSubcommand((s) =>
